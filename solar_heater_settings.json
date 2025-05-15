@@ -1,0 +1,18 @@
+{
+    "INLET_SENSOR_ID": "28-xxxxxxxxxxxx",
+    "OUTLET_SENSOR_ID": "28-xxxxxxxxxxxx",
+    "PUMP_PWM_PIN": 18,
+    "PWM_FREQUENCY": 100,
+    "MIN_PUMP_SPEED": 20,
+    "MAX_PUMP_SPEED": 100,
+    "PUMP_SPEED_STEP": 5,
+    "STABILIZATION_TIME_S": 45,
+    "LOOP_INTERVAL_S": 300,
+    "MIN_TEMP_DIFFERENCE_TO_RUN": 1.0,
+    "MIN_INLET_TEMP_TO_RUN": 10.0,
+    "MAX_OUTLET_TEMP_CUTOFF": 75.0,
+    "MAX_PUMP_FLOW_RATE_LPM": 20.0,
+    "LOG_SAVE_INTERVAL_S": 300,
+    "TEMPERATURE_LOG_FILE": "temperature_log.csv",
+    "MAX_HISTORY_POINTS": 150
+}
