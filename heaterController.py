@@ -3,7 +3,7 @@ import glob
 import time
 import RPi.GPIO as GPIO
 import threading
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file # Added send_file
+from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file
 import collections # For deque
 import csv         # For CSV logging
 import json        # For settings persistence
@@ -13,10 +13,9 @@ import json        # For settings persistence
 SETTINGS_FILE = 'solar_heater_settings.json'
 
 # --- Default Settings (used if settings file is missing or invalid) ---
-# These were the settings at the point of the "Settings Page & Data Logging & Download" version
 DEFAULT_SETTINGS = {
-    "INLET_SENSOR_ID": "28-330cd445a1e8",
-    "OUTLET_SENSOR_ID": "28-7c0ed445ed1e",
+    "INLET_SENSOR_ID": "28-xxxxxxxxxxxx",
+    "OUTLET_SENSOR_ID": "28-xxxxxxxxxxxx",
     "PUMP_PWM_PIN": 18,
     "PWM_FREQUENCY": 100,
     "MIN_PUMP_SPEED": 20,
@@ -24,7 +23,7 @@ DEFAULT_SETTINGS = {
     "PUMP_SPEED_STEP": 5,
     "STABILIZATION_TIME_S": 45,
     "LOOP_INTERVAL_S": 300,
-    "MIN_TEMP_DIFFERENCE_TO_RUN": 1.0, # This was the single threshold before DELTA_T_ON/OFF
+    "MIN_TEMP_DIFFERENCE_TO_RUN": 1.0, 
     "MIN_INLET_TEMP_TO_RUN": 10.0,
     "MAX_OUTLET_TEMP_CUTOFF": 75.0,
     "MAX_PUMP_FLOW_RATE_LPM": 20.0,
@@ -48,20 +47,19 @@ app_status = {
     "pump_speed": 0,
     "thermal_power_watts": "N/A",
     "system_message": "Initializing...",
-    "optimal_pump_speed_found": "N/A", # Will be set from settings
+    "optimal_pump_speed_found": "N/A", 
     "max_delta_t_found": "N/A",
     "last_update": time.strftime("%Y-%m-%d %H:%M:%S")
 }
 temperature_history = collections.deque(maxlen=DEFAULT_SETTINGS["MAX_HISTORY_POINTS"])
 log_buffer = []
-data_lock = threading.Lock()
+data_lock = threading.RLock() # Changed to RLock for reentrancy
 
 # --- Globals ---
 inlet_sensor_file = None
 outlet_sensor_file = None
 pwm_pump = None
 control_thread_running = False
-# watchdog_fd = None # Watchdog not in this version
 
 # --- Settings Load/Save Functions ---
 def load_settings():
@@ -71,25 +69,33 @@ def load_settings():
         with open(SETTINGS_FILE, 'r') as f:
             loaded_s = json.load(f)
             temp_settings = DEFAULT_SETTINGS.copy()
-            for key, value in loaded_s.items():
-                if key in temp_settings:
+            for key in DEFAULT_SETTINGS.keys(): # Ensure all default keys are considered
+                if key in loaded_s:
+                    value_from_file = loaded_s[key]
                     default_val_type = type(DEFAULT_SETTINGS[key])
                     try:
-                        if default_val_type == bool: # Should not have bools in this version's defaults
-                            converted_value = str(value).lower() in ['true', 'on', '1', 'yes', 'checked']
+                        converted_value = None
+                        if default_val_type == bool:
+                            converted_value = str(value_from_file).lower() in ['true', 'on', '1', 'yes', 'checked']
                         elif default_val_type == int:
-                            converted_value = int(float(value))
+                            converted_value = int(float(value_from_file)) 
                         elif default_val_type == float:
-                            converted_value = float(value)
+                            converted_value = float(value_from_file)
                         else: 
-                            converted_value = str(value)
+                            converted_value = str(value_from_file)
                         temp_settings[key] = converted_value
-                    except ValueError:
-                         print(f"Warning: Could not convert setting '{key}' value '{value}' to {default_val_type}. Using default.")
-                else:
-                    print(f"Warning: Unknown setting '{key}' in {SETTINGS_FILE}. Ignoring.")
-            current_settings = temp_settings
+                    except (ValueError, TypeError): # Catch if conversion fails
+                         print(f"Warning: Could not convert loaded setting '{key}' value '{value_from_file}' to {default_val_type}. Using default: {DEFAULT_SETTINGS[key]}.")
+                         temp_settings[key] = DEFAULT_SETTINGS[key] # Fallback to default for this key
+                # If key from DEFAULT_SETTINGS is not in loaded_s, temp_settings already has the default
+            
+            for key_loaded in loaded_s: # Check for unknown keys from file
+                if key_loaded not in DEFAULT_SETTINGS:
+                    print(f"Warning: Unknown setting '{key_loaded}' in {SETTINGS_FILE}. Ignoring.")
+            
+            current_settings = temp_settings # Assign validated settings
             print("Settings loaded successfully.")
+
     except FileNotFoundError:
         print(f"{SETTINGS_FILE} not found. Using default settings and creating file.")
         current_settings = DEFAULT_SETTINGS.copy()
@@ -104,12 +110,11 @@ def load_settings():
     
     with data_lock:
         app_status["optimal_pump_speed_found"] = current_settings.get("MIN_PUMP_SPEED", DEFAULT_SETTINGS["MIN_PUMP_SPEED"])
-        # control_mode and target_pump_speed were not in app_status in this version
     
     max_hist_points = current_settings.get("MAX_HISTORY_POINTS", DEFAULT_SETTINGS["MAX_HISTORY_POINTS"])
     if not isinstance(max_hist_points, int) or max_hist_points <= 0:
         max_hist_points = DEFAULT_SETTINGS["MAX_HISTORY_POINTS"]
-        current_settings["MAX_HISTORY_POINTS"] = max_hist_points
+        current_settings["MAX_HISTORY_POINTS"] = max_hist_points # Correct in memory
     if temperature_history.maxlen != max_hist_points:
         temperature_history = collections.deque(maxlen=max_hist_points)
         print(f"Graph history points reconfigured to: {max_hist_points}")
@@ -117,7 +122,11 @@ def load_settings():
 def save_settings():
     print(f"Attempting to save settings to {SETTINGS_FILE}...")
     try:
-        with data_lock: settings_to_save = current_settings.copy()
+        # No need for data_lock here if current_settings is copied before calling,
+        # or if this function is always called from a context that already holds the lock.
+        # For safety, if called independently, a lock might be needed.
+        # Given it's called from /settings POST which holds the lock, this is fine.
+        settings_to_save = current_settings.copy() # Make a copy to save
         with open(SETTINGS_FILE, 'w') as f:
             json.dump(settings_to_save, f, indent=4)
         print("Settings saved successfully.")
@@ -133,7 +142,7 @@ def discover_sensors():
         inlet_id = current_settings["INLET_SENSOR_ID"]
         outlet_id = current_settings["OUTLET_SENSOR_ID"]
         if "x" in inlet_id.lower() or "x" in outlet_id.lower():
-            raise KeyError("Default/placeholder sensor IDs are still in use.")
+            raise KeyError("Default/placeholder sensor IDs are still in use. Please configure them in Settings.")
         inlet_device_folder = glob.glob(BASE_DIR + inlet_id)[0]
         inlet_sensor_file = inlet_device_folder + '/w1_slave'
         outlet_device_folder = glob.glob(BASE_DIR + outlet_id)[0]
@@ -178,23 +187,17 @@ def setup_pwm():
     pwm_pump.start(0)
     update_status(pump_speed=0, system_message="PWM Initialized. Pump is OFF.")
 
-def set_pump_speed(speed_percent_target): # Renamed from speed_percent for clarity
+def set_pump_speed(speed_percent_target):
     global pwm_pump
     if pwm_pump is None:
         update_status(system_message="Error: PWM not initialized."); return
-    
-    target_speed = max(0, min(100, speed_percent_target)) # Ensure target is 0-100
-    
+    target_speed = max(0, min(100, speed_percent_target))
     actual_duty_cycle = 0
-    if target_speed > 0: # Only apply min/max if trying to run
+    if target_speed > 0:
         actual_duty_cycle = max(current_settings["MIN_PUMP_SPEED"], min(current_settings["MAX_PUMP_SPEED"], target_speed))
-    
     if pwm_pump: pwm_pump.ChangeDutyCycle(float(actual_duty_cycle))
     else: print("Error: pwm_pump object is None in set_pump_speed.")
-    
-    # In this version, app_status["pump_speed"] reflected the actual duty cycle
     update_status(pump_speed=actual_duty_cycle)
-
 
 def stop_pump():
     set_pump_speed(0)
@@ -206,13 +209,10 @@ def calculate_estimated_thermal_power(delta_t_celsius, current_actual_pump_speed
     estimated_flow_lps = (float(current_actual_pump_speed_percent) / 100.0) * (current_settings["MAX_PUMP_FLOW_RATE_LPM"] / 60.0)
     return (estimated_flow_lps * WATER_DENSITY_KG_L) * SPECIFIC_HEAT_CAPACITY_WATER * delta_t_celsius
 
-# Daily stats were not in this version
-# def update_daily_stats(...): pass
-
 # --- CSV Logging ---
 def write_log_buffer_to_csv():
     global log_buffer
-    with data_lock:
+    with data_lock: # Protects log_buffer
         if not log_buffer: return
         data_to_write = list(log_buffer); log_buffer.clear()
     if not data_to_write: return
@@ -238,7 +238,7 @@ def update_status_and_history(inlet_temp=None, outlet_temp=None, delta_t=None, *
         if isinstance(inlet_temp, float) and isinstance(outlet_temp, float): calculated_delta_t = outlet_temp - inlet_temp
         elif isinstance(delta_t, float): calculated_delta_t = delta_t
         status_updates["delta_t"] = f"{calculated_delta_t:.2f}" if calculated_delta_t is not None else "N/A"
-        actual_pump_speed = float(app_status.get("pump_speed", 0)) # This is actual duty cycle
+        actual_pump_speed = float(app_status.get("pump_speed", 0)) 
         power_w = calculate_estimated_thermal_power(calculated_delta_t, actual_pump_speed)
         status_updates["thermal_power_watts"] = f"{power_w:.1f}" if power_w is not None else "N/A"
         for key, value in status_updates.items():
@@ -247,29 +247,26 @@ def update_status_and_history(inlet_temp=None, outlet_temp=None, delta_t=None, *
         if isinstance(inlet_temp, float) and isinstance(outlet_temp, float):
             temperature_history.append({"time": current_time_str_graph, "inlet": round(inlet_temp, 2), "outlet": round(outlet_temp, 2)})
             log_buffer.append({"timestamp": full_timestamp_log, "inlet_temp_c": round(inlet_temp, 2), "outlet_temp_c": round(outlet_temp, 2)})
-        elif not any(k in kwargs for k in ["pump_speed", "system_message"]): # target_pump_speed not present
+        elif not any(k in kwargs for k in ["pump_speed", "system_message"]):
              temperature_history.append({"time": current_time_str_graph, "inlet": None, "outlet": None})
 
 def update_status(**kwargs):
     with data_lock:
         for key, value in kwargs.items():
             if key in app_status:
-                if isinstance(value, float) and key not in ["inlet_temp", "outlet_temp", "delta_t", "thermal_power_watts"]: # pump_on_time & energy_harvested not present
+                if isinstance(value, float) and key not in ["inlet_temp", "outlet_temp", "delta_t", "thermal_power_watts"]:
                     app_status[key] = f"{value:.2f}" 
                 else: app_status[key] = value
         app_status["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
 # --- Main Control Logic ---
 def optimize_pump_speed():
-    # Learning algorithm was not in this version
     update_status_and_history(system_message="Optimizing pump speed...") 
     current_max_delta_t_this_cycle, current_optimal_speed_this_cycle = -100.0, current_settings["MIN_PUMP_SPEED"]
     initial_inlet_temp = read_temp_c(inlet_sensor_file)
     if initial_inlet_temp is None or initial_inlet_temp < current_settings["MIN_INLET_TEMP_TO_RUN"]:
         msg = f"Opt aborted: Inlet ({initial_inlet_temp or 'N/A'}) < {current_settings['MIN_INLET_TEMP_TO_RUN']}°C."
         stop_pump(); update_status_and_history(inlet_temp=initial_inlet_temp, system_message=msg); return
-    
-    # Simple sweep from MIN to MAX
     for speed_to_test in range(current_settings["MIN_PUMP_SPEED"], current_settings["MAX_PUMP_SPEED"] + 1, current_settings["PUMP_SPEED_STEP"]):
         if not control_thread_running: return
         set_pump_speed(speed_to_test) 
@@ -287,8 +284,6 @@ def optimize_pump_speed():
             if out_temp > current_settings["MAX_OUTLET_TEMP_CUTOFF"]:
                 msg = f"SAFETY: Outlet {out_temp:.2f}°C > {current_settings['MAX_OUTLET_TEMP_CUTOFF']}°C. Stopping."
                 stop_pump(); update_status_and_history(outlet_temp=out_temp, system_message=msg); return
-    
-    # Use MIN_TEMP_DIFFERENCE_TO_RUN as the threshold
     if current_max_delta_t_this_cycle >= current_settings["MIN_TEMP_DIFFERENCE_TO_RUN"]:
         with data_lock:
             app_status["max_delta_t_found"] = f"{current_max_delta_t_this_cycle:.2f}"
@@ -308,56 +303,40 @@ def control_logic_thread_func():
     load_settings()
     if not discover_sensors(): control_thread_running = False; return
     setup_pwm(); time.sleep(1)
-    # Watchdog setup was not in this version
     last_control_cycle_time = time.time() - current_settings["LOOP_INTERVAL_S"] 
     last_log_save_time = time.time()
-    # last_watchdog_kick_time not needed
-    # Daily stats init not in this version
-
     while control_thread_running:
         current_time = time.time()
         loop_interval = current_settings["LOOP_INTERVAL_S"]
         log_interval = current_settings["LOG_SAVE_INTERVAL_S"]
-        # watchdog_kick_interval not needed
-        
-        # Daily stats update was not in this version
-        
-        # Control mode handling was simpler in this version (no manual mode from UI)
         if (current_time - last_control_cycle_time) >= loop_interval:
             update_status(system_message="Checking conditions...")
             inlet_temp, outlet_temp, dt_val = read_temp_c(inlet_sensor_file), read_temp_c(outlet_sensor_file), None
             if inlet_temp and outlet_temp: dt_val = outlet_temp - inlet_temp
             update_status_and_history(inlet_temp=inlet_temp, outlet_temp=outlet_temp, delta_t=dt_val, system_message="Checked conditions.")
-            
             if inlet_temp and outlet_temp:
                 if outlet_temp > current_settings["MAX_OUTLET_TEMP_CUTOFF"]:
                     msg = f"SAFETY: Outlet {outlet_temp:.2f}°C > {current_settings['MAX_OUTLET_TEMP_CUTOFF']}°C. Stopping."
                     stop_pump(); update_status(system_message=msg)
                 elif inlet_temp < current_settings["MIN_INLET_TEMP_TO_RUN"]:
                     msg = f"COND: Inlet {inlet_temp:.2f}°C < {current_settings['MIN_INLET_TEMP_TO_RUN']}°C. Pump OFF."
-                    if float(app_status.get("pump_speed", "0")) > 0 : stop_pump() # Ensure it's off
+                    if float(app_status.get("pump_speed", "0")) > 0 : stop_pump()
                     update_status(system_message=msg)
-                elif dt_val >= current_settings["MIN_TEMP_DIFFERENCE_TO_RUN"]: # Single threshold
+                elif dt_val >= current_settings["MIN_TEMP_DIFFERENCE_TO_RUN"]:
                     msg = f"COND: ΔT ({dt_val:.2f}°C) sufficient. Optimizing..."
                     update_status(system_message=msg); optimize_pump_speed()
-                else: # Delta T too low
+                else:
                     msg = f"COND: ΔT ({dt_val:.2f}°C) < {current_settings['MIN_TEMP_DIFFERENCE_TO_RUN']}°C. Pump OFF."
-                    if float(app_status.get("pump_speed", "0")) > 0 : stop_pump() # Ensure it's off
+                    if float(app_status.get("pump_speed", "0")) > 0 : stop_pump()
                     update_status(system_message=msg)
             else: 
                 errmsg = "Sensor error in main loop. Stopping pump."
                 stop_pump(); update_status(system_message=errmsg)
             last_control_cycle_time = current_time
-        
         if (current_time - last_log_save_time) >= log_interval:
             write_log_buffer_to_csv(); last_log_save_time = current_time
-        
-        # Watchdog kicking not in this version
-        
         time.sleep(1) 
-    
     stop_pump(); update_status(system_message="Control thread stopped."); write_log_buffer_to_csv()
-    # close_watchdog not needed
 
 # --- Flask Web Application ---
 flask_app = Flask(__name__)
@@ -365,7 +344,6 @@ flask_app = Flask(__name__)
 @flask_app.route('/')
 def index():
     with data_lock: current_display_status = app_status.copy()
-    # This version had the simpler header (Dashboard, Settings)
     html_template_dashboard = """
     <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="10"><title>Solar Heater Dashboard</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -379,7 +357,7 @@ def index():
         .content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box;}
         .container { background-color: #ffffff; padding: 20px 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 850px; margin-bottom: 20px; }
         h2.page-title { color: #0056b3; text-align: center; margin-bottom: 20px; font-size: 1.7em;}
-        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 15px; margin-top: 10px; } /* Adjusted for fewer items */
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 15px; margin-top: 10px; }
         .status-item { background-color: #e9ecef; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .status-item strong { color: #0056b3; font-weight: 600; display: block; margin-bottom: 7px; font-size: 0.9em;}
         .status-item span { font-size: 1.05em; font-weight: 500; }
@@ -438,42 +416,59 @@ def settings_page():
         try:
             settings_changed = False
             form_errors = []
-            with data_lock: 
-                new_settings_data = current_settings.copy()
-                for key in DEFAULT_SETTINGS.keys(): # Only iterate over keys present in DEFAULT_SETTINGS
-                    if key == "CONTROL_MODE" or key == "MANUAL_PUMP_SPEED_SETTING" or "WATCHDOG" in key: # These were not in this version's settings form
-                        continue 
+            
+            # Create a temporary dictionary to hold validated new settings
+            new_settings_candidate = current_settings.copy() # Start with current values
+
+            with data_lock: # Lock only when reading/writing shared current_settings
+                for key in DEFAULT_SETTINGS.keys(): 
                     form_value = request.form.get(key)
-                    if form_value is not None:
+                    if form_value is not None: # If the field was submitted
                         try:
                             default_val_type = type(DEFAULT_SETTINGS[key])
                             converted_value = None
-                            if default_val_type == bool: converted_value = str(form_value).lower() in ['true', 'on', '1', 'yes', 'checked']
-                            elif default_val_type == float: converted_value = float(form_value)
-                            elif default_val_type == int: converted_value = int(float(form_value))
-                            else: converted_value = str(form_value)
-                            if new_settings_data.get(key) != converted_value:
-                                new_settings_data[key] = converted_value
-                                settings_changed = True
+                            if default_val_type == bool: 
+                                converted_value = str(form_value).lower() in ['true', 'on', '1', 'yes', 'checked']
+                            elif default_val_type == float: 
+                                converted_value = float(form_value)
+                            elif default_val_type == int: 
+                                converted_value = int(float(form_value)) # Allow "20.0" for int
+                            else: # string
+                                converted_value = str(form_value)
+                            
+                            new_settings_candidate[key] = converted_value # Store converted value in candidate
                         except ValueError:
-                            form_errors.append(f"Invalid format for '{key.replace('_',' ').title()}'.")
+                            form_errors.append(f"Invalid format for '{key.replace('_',' ').title()}'. Value '{form_value}' could not be converted.")
+                            # Keep the old value from current_settings in new_settings_candidate for this key
+                            new_settings_candidate[key] = current_settings.get(key, DEFAULT_SETTINGS[key]) 
                 
                 if form_errors:
-                    message = "Please correct errors: " + " | ".join(form_errors)
-                else:
+                    message = "Please correct the following errors: " + " | ".join(form_errors)
+                    # Do not update current_settings or save if there are form errors
+                else: # No conversion errors, proceed to check if anything actually changed
+                    for key in DEFAULT_SETTINGS.keys():
+                        if current_settings.get(key) != new_settings_candidate.get(key):
+                            settings_changed = True
+                            break 
+                    
                     if settings_changed:
-                        current_settings = new_settings_data
-                        if save_settings(): 
-                            message = "Settings updated and saved! Some changes may need a script restart."
+                        current_settings = new_settings_candidate # Apply all successfully converted changes
+                        if save_settings(): # save_settings now uses the updated global current_settings
+                            message = "Settings updated and saved! Some changes may need a script restart (e.g., sensor IDs, PWM pin)."
+                            # Re-initialize deque if MAX_HISTORY_POINTS changed
                             if temperature_history.maxlen != current_settings["MAX_HISTORY_POINTS"]:
                                  temperature_history = collections.deque(maxlen=current_settings["MAX_HISTORY_POINTS"])
-                        else: message = "Settings updated in memory, but failed to save to file."
-                    else: message = "No changes detected."
-        except Exception as e: message = f"Error updating settings: {e}"
+                                 print(f"Graph history points reconfigured to: {current_settings['MAX_HISTORY_POINTS']}")
+                        else:
+                            message = "Settings updated in memory, but failed to save to file."
+                    else:
+                        message = "No changes detected in settings."
+        except Exception as e:
+            message = f"An unexpected error occurred while updating settings: {e}"
+            print(f"Error in /settings POST: {e}") # Log the full error for debugging
         return redirect(url_for('settings_page', message=message))
 
     with data_lock: settings_to_display = current_settings.copy()
-    # Simplified settings HTML for this reverted version
     settings_html_template = """
     <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Controller Settings</title><style>
@@ -523,18 +518,22 @@ def settings_page():
     </div></div><footer>Controller Version Reverted (Settings/Log/Download)</footer></body></html>"""
     return render_template_string(settings_html_template, settings=settings_to_display, message=message, DEFAULT_SETTINGS=DEFAULT_SETTINGS)
 
-# /history route was not in this version
-# @flask_app.route('/history') ...
-
 @flask_app.route('/download_log')
 def download_log():
     try:
         log_filename = current_settings.get("TEMPERATURE_LOG_FILE", DEFAULT_SETTINGS["TEMPERATURE_LOG_FILE"])
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Assume script and log file are in the same directory when run directly.
+        # For systemd, WorkingDirectory should be set correctly.
+        script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
         log_path = os.path.join(script_dir, log_filename)
-        if not os.path.isfile(log_path): return "Error: Log file not found.", 404
+        
+        if not os.path.isfile(log_path): 
+            print(f"Log file not found at {log_path}")
+            return "Error: Log file not found. Check settings or if any data has been logged.", 404
         return send_file(log_path, as_attachment=True, download_name=log_filename, mimetype='text/csv')
-    except Exception as e: return f"Error sending log file: {e}", 500
+    except Exception as e: 
+        print(f"Error sending log file: {e}")
+        return f"Error sending log file: {e}", 500
 
 # --- Main Execution ---
 if __name__ == '__main__':
@@ -548,16 +547,14 @@ if __name__ == '__main__':
         control_thread_running = True
         control_thread = threading.Thread(target=control_logic_thread_func, daemon=True); control_thread.start()
         update_status(system_message="Web server started. Control logic initializing...")
-        flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False) # use_reloader=False is important for threaded apps
     except KeyboardInterrupt: print("\nCtrl+C received. Shutting down...")
     except Exception as e: print(f"Critical error in main: {e}")
     finally:
         print("Initiating cleanup..."); control_thread_running = False
         if control_thread and control_thread.is_alive():
-            control_thread.join(timeout=15)
+            control_thread.join(timeout=15) # Increased timeout slightly
             if control_thread.is_alive(): print("Control thread timed out.")
         write_log_buffer_to_csv()
-        # close_watchdog not needed in this version
         if pwm_pump: pwm_pump.stop()
         GPIO.cleanup(); print("Program terminated.")
-7

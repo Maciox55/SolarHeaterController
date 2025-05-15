@@ -1,6 +1,6 @@
 {
-    "INLET_SENSOR_ID": "28-xxxxxxxxxxxx",
-    "OUTLET_SENSOR_ID": "28-xxxxxxxxxxxx",
+    "INLET_SENSOR_ID": "28-330cd445a1e8",
+    "OUTLET_SENSOR_ID": "28-7c0ed445ed1e",
     "PUMP_PWM_PIN": 18,
     "PWM_FREQUENCY": 100,
     "MIN_PUMP_SPEED": 20,
