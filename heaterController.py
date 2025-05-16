@@ -657,7 +657,7 @@ def settings_page():
     <body><header><h1>Solar Heater Controller</h1><nav><a href="/">Dashboard</a><a href="/settings" class="active">Settings</a><a href="/history">History</a></nav></header>
     <div class="content-wrapper"><div class="container"><h2 class="page-title">Application Settings</h2>
     {% if message %}
-        <div class="message-box {{ 'success' in message.lower() else 'error' if 'error' in message.lower() else 'warning' if 'warning' in message.lower() or 'restart' in message.lower() else '' }}">{{ message }}</div>
+        <div class="message-box {{ 'success' if 'success' in message.lower() else ('error' if 'error' in message.lower() else ('warning' if ('warning' in message.lower() or 'restart' in message.lower()) else '')) }}">{{ message }}</div>
     {% endif %}
     <form method="POST"><div class="form-grid">
     <div class="form-section"><h3>Sensor & Hardware</h3>
