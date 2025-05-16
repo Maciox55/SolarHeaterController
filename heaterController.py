@@ -37,7 +37,8 @@ DEFAULT_SETTINGS = {
     "ENABLE_HARDWARE_WATCHDOG": False,
     "WATCHDOG_KICK_INTERVAL_S": 30,
     "WATCHDOG_DEVICE": "/dev/watchdog",
-    "DISPLAY_TEMP_UNIT": "C"
+    "DISPLAY_TEMP_UNIT": "C",
+    "REOPTIMIZATION_INTERVAL_S": 1800
 }
 # --- Active Settings (loaded from file or defaults) ---
 current_settings = DEFAULT_SETTINGS.copy()
@@ -81,13 +82,23 @@ def celsius_to_fahrenheit(temp_c):
     if temp_c is None: return None
     return (temp_c * 9/5) + 32
 
-def convert_temp_for_display(temp_c, target_unit):
+def format_absolute_temp_for_display(temp_c, target_unit):
+    """Formats an absolute temperature for display in the target unit."""
     if temp_c is None: return "N/A"
-    if not isinstance(temp_c, (float, int)): return "Error" 
-    
+    if not isinstance(temp_c, (float, int)): return "N/A" # Changed from "Error"
+
     if target_unit == "F":
-        return f"{celsius_to_fahrenheit(temp_c):.1f}" 
-    return f"{temp_c:.2f}" 
+        return f"{celsius_to_fahrenheit(temp_c):.1f}"
+    return f"{temp_c:.2f}"
+
+def format_delta_temp_for_display(delta_c, target_unit):
+    """Formats a temperature difference (delta) for display in the target unit."""
+    if delta_c is None: return "N/A"
+    if not isinstance(delta_c, (float, int)): return "N/A"
+
+    if target_unit == "F":
+        return f"{(delta_c * 9/5):.1f}"
+    return f"{delta_c:.1f}" # Display delta C with 1 decimal place for consistency
 
 # --- Settings Load/Save Functions ---
 def load_settings():
@@ -292,19 +303,20 @@ def update_status_and_history(inlet_temp_c=None, outlet_temp_c=None, delta_t_c=N
         display_unit = current_settings.get("DISPLAY_TEMP_UNIT", "C")
         current_time_str_graph, full_timestamp_log = time.strftime("%H:%M:%S"), time.strftime("%Y-%m-%d %H:%M:%S")
         status_updates = kwargs.copy()
-
-        status_updates["inlet_temp_display"] = convert_temp_for_display(inlet_temp_c, display_unit)
-        status_updates["outlet_temp_display"] = convert_temp_for_display(outlet_temp_c, display_unit)
         
+        status_updates["inlet_temp_display"] = format_absolute_temp_for_display(inlet_temp_c, display_unit)
+        status_updates["outlet_temp_display"] = format_absolute_temp_for_display(outlet_temp_c, display_unit)
+
         calculated_delta_t_c = None
         if isinstance(inlet_temp_c, float) and isinstance(outlet_temp_c, float):
             calculated_delta_t_c = outlet_temp_c - inlet_temp_c
         elif isinstance(delta_t_c, float): 
             calculated_delta_t_c = delta_t_c
         
-        status_updates["delta_t_display"] = convert_temp_for_display(calculated_delta_t_c, display_unit)
-        
-        actual_pump_speed = float(app_status.get("pump_speed", 0)) 
+        # Use the new function for formatting delta T
+        status_updates["delta_t_display"] = format_delta_temp_for_display(calculated_delta_t_c, display_unit)
+
+        actual_pump_speed = float(app_status.get("pump_speed", 0))
         power_w = calculate_estimated_thermal_power(calculated_delta_t_c, actual_pump_speed)
         status_updates["thermal_power_watts"] = f"{power_w:.1f}" if power_w is not None else "N/A"
             
@@ -345,7 +357,7 @@ def optimize_pump_speed():
     initial_inlet_temp_c = read_temp_c(inlet_sensor_file)
 
     if initial_inlet_temp_c is None or initial_inlet_temp_c < current_settings["MIN_INLET_TEMP_TO_RUN"]:
-        msg = f"Opt aborted: Inlet ({convert_temp_for_display(initial_inlet_temp_c, current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}) < {convert_temp_for_display(current_settings['MIN_INLET_TEMP_TO_RUN'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}."
+        msg = f"Opt aborted: Inlet ({format_absolute_temp_for_display(initial_inlet_temp_c, current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}) < {format_absolute_temp_for_display(current_settings['MIN_INLET_TEMP_TO_RUN'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}."
         stop_pump(); update_status_and_history(inlet_temp_c=initial_inlet_temp_c, system_message=msg); return
     
     speeds_to_check = sorted(list(set(list(range(start_speed, current_settings["MAX_PUMP_SPEED"] + 1, current_settings["PUMP_SPEED_STEP"])) + 
@@ -365,21 +377,21 @@ def optimize_pump_speed():
             if delta_t_c_val > current_max_delta_t_c_this_cycle:
                 current_max_delta_t_c_this_cycle, current_optimal_speed_this_cycle = delta_t_c_val, speed_to_test
             if out_temp_c > current_settings["MAX_OUTLET_TEMP_CUTOFF"]:
-                msg = f"SAFETY: Outlet {convert_temp_for_display(out_temp_c, current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']} > {convert_temp_for_display(current_settings['MAX_OUTLET_TEMP_CUTOFF'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}. Stopping."
+                msg = f"SAFETY: Outlet {format_absolute_temp_for_display(out_temp_c, current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status.get('display_temp_unit_symbol', '°C')} > {format_absolute_temp_for_display(current_settings['MAX_OUTLET_TEMP_CUTOFF'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status.get('display_temp_unit_symbol', '°C')}. Stopping."
                 stop_pump(); update_status_and_history(outlet_temp_c=out_temp_c, system_message=msg); return
     
     if current_max_delta_t_c_this_cycle >= current_settings["DELTA_T_OFF"]: 
         with data_lock:
-            app_status["max_delta_t_found_display"] = convert_temp_for_display(current_max_delta_t_c_this_cycle, current_settings.get("DISPLAY_TEMP_UNIT","C"))
+            app_status["max_delta_t_found_display"] = format_delta_temp_for_display(current_max_delta_t_c_this_cycle, current_settings.get("DISPLAY_TEMP_UNIT","C"))
             app_status["optimal_pump_speed_found"] = current_optimal_speed_this_cycle
-        msg = f"Opt complete. Optimal: {current_optimal_speed_this_cycle}% (ΔT: {app_status['max_delta_t_found_display']}{app_status['display_temp_unit_symbol']})."
+        msg = f"Opt complete. Optimal: {current_optimal_speed_this_cycle}% (ΔT: {app_status['max_delta_t_found_display']}{app_status.get('display_temp_unit_symbol', '°C')})."
         set_pump_speed(current_optimal_speed_this_cycle)
         final_in_c, final_out_c, final_dt_c = read_temp_c(inlet_sensor_file), read_temp_c(outlet_sensor_file), None
         if final_in_c and final_out_c: final_dt_c = final_out_c - final_in_c
         update_status_and_history(inlet_temp_c=final_in_c, outlet_temp_c=final_out_c, delta_t_c=final_dt_c, system_message=msg)
     else:
-        msg = f"Opt: No speed yielded ΔT >= {convert_temp_for_display(current_settings['DELTA_T_OFF'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status['display_temp_unit_symbol']}. Stopping."
-        with data_lock: app_status["max_delta_t_found_display"] = convert_temp_for_display(current_max_delta_t_c_this_cycle if current_max_delta_t_c_this_cycle > -100 else None, current_settings.get("DISPLAY_TEMP_UNIT","C"))
+        msg = f"Opt: No speed yielded ΔT >= {format_delta_temp_for_display(current_settings['DELTA_T_OFF'], current_settings.get('DISPLAY_TEMP_UNIT','C'))}{app_status.get('display_temp_unit_symbol', '°C')}. Stopping."
+        with data_lock: app_status["max_delta_t_found_display"] = format_delta_temp_for_display(current_max_delta_t_c_this_cycle if current_max_delta_t_c_this_cycle > -100.0 else None, current_settings.get("DISPLAY_TEMP_UNIT","C"))
         stop_pump(); update_status(system_message=msg)
 
 def control_logic_thread_func():
@@ -388,7 +400,8 @@ def control_logic_thread_func():
     if not discover_sensors(): control_thread_running = False; return
     setup_pwm(); time.sleep(1)
     if current_settings.get("ENABLE_HARDWARE_WATCHDOG", False): setup_watchdog()
-    last_control_cycle_time = time.time() - current_settings["LOOP_INTERVAL_S"] 
+    last_control_cycle_time = time.time() - current_settings["LOOP_INTERVAL_S"] # Ensure first cycle runs
+    last_reoptimization_time = time.time() - current_settings.get("REOPTIMIZATION_INTERVAL_S", DEFAULT_SETTINGS["REOPTIMIZATION_INTERVAL_S"]) # Ensure first optimization can run
     last_log_save_time, last_watchdog_kick_time = time.time(), time.time()
     with data_lock:
         app_status["last_stats_reset_date"] = datetime.date.today().isoformat()
@@ -397,6 +410,7 @@ def control_logic_thread_func():
         current_time = time.time()
         loop_interval = current_settings["LOOP_INTERVAL_S"]
         log_interval = current_settings["LOG_SAVE_INTERVAL_S"]
+        reopt_interval = current_settings.get("REOPTIMIZATION_INTERVAL_S", DEFAULT_SETTINGS["REOPTIMIZATION_INTERVAL_S"])
         watchdog_kick_interval = current_settings.get("WATCHDOG_KICK_INTERVAL_S", 30)
         
         pump_speed_val, power_val_watts = 0.0, 0.0
@@ -431,23 +445,29 @@ def control_logic_thread_func():
 
                 if inlet_temp_c and outlet_temp_c:
                     if outlet_temp_c > current_settings["MAX_OUTLET_TEMP_CUTOFF"]:
-                        msg = f"SAFETY: Outlet {convert_temp_for_display(outlet_temp_c, display_unit)}{unit_symbol} > {convert_temp_for_display(current_settings['MAX_OUTLET_TEMP_CUTOFF'], display_unit)}{unit_symbol}. Stopping."
+                        msg = f"SAFETY: Outlet {format_absolute_temp_for_display(outlet_temp_c, display_unit)}{unit_symbol} > {format_absolute_temp_for_display(current_settings['MAX_OUTLET_TEMP_CUTOFF'], display_unit)}{unit_symbol}. Stopping."
                         stop_pump(); update_status(system_message=msg)
                     elif inlet_temp_c < current_settings["MIN_INLET_TEMP_TO_RUN"]:
-                        msg = f"AUTO: Inlet {convert_temp_for_display(inlet_temp_c, display_unit)}{unit_symbol} < {convert_temp_for_display(current_settings['MIN_INLET_TEMP_TO_RUN'], display_unit)}{unit_symbol}. Pump OFF."
+                        msg = f"AUTO: Inlet {format_absolute_temp_for_display(inlet_temp_c, display_unit)}{unit_symbol} < {format_absolute_temp_for_display(current_settings['MIN_INLET_TEMP_TO_RUN'], display_unit)}{unit_symbol}. Pump OFF."
                         if current_pump_on: stop_pump()
                         update_status(system_message=msg)
                     elif current_pump_on and dt_c_val < current_settings["DELTA_T_OFF"]:
-                        msg = f"AUTO: ΔT ({convert_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) < DELTA_T_OFF ({convert_temp_for_display(current_settings['DELTA_T_OFF'], display_unit)}{unit_symbol}). Stopping."
+                        msg = f"AUTO: ΔT ({format_delta_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) < ΔT_OFF ({format_delta_temp_for_display(current_settings['DELTA_T_OFF'], display_unit)}{unit_symbol}). Stopping."
                         stop_pump(); update_status(system_message=msg)
                     elif not current_pump_on and dt_c_val >= current_settings["DELTA_T_ON"]:
-                        msg = f"AUTO: ΔT ({convert_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) >= DELTA_T_ON ({convert_temp_for_display(current_settings['DELTA_T_ON'], display_unit)}{unit_symbol}). Optimizing..."
-                        update_status(system_message=msg); optimize_pump_speed()
-                    elif current_pump_on: 
-                         msg = f"AUTO: ΔT ({convert_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) OK. Re-optimizing..."
-                         update_status(system_message=msg); optimize_pump_speed()
+                        msg = f"AUTO: ΔT ({format_delta_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) >= ΔT_ON ({format_delta_temp_for_display(current_settings['DELTA_T_ON'], display_unit)}{unit_symbol}). Optimizing..."
+                        update_status(system_message=msg); optimize_pump_speed(); last_reoptimization_time = current_time
+                    elif current_pump_on: # Already on, conditions still good
+                        if (current_time - last_reoptimization_time) >= reopt_interval:
+                            msg = f"AUTO: ΔT ({format_delta_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) OK. Re-optimizing due to interval..."
+                            update_status(system_message=msg); optimize_pump_speed(); last_reoptimization_time = current_time
+                        else:
+                            # Pump is on, delta T is still >= DELTA_T_OFF (otherwise caught above), but not time for re-optimization.
+                            # Just update status with current readings. The optimize_pump_speed() call is skipped.
+                            msg = f"AUTO: Running. ΔT ({format_delta_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) OK."
+                            update_status(system_message=msg) # update_status_and_history was already called
                     else:
-                        msg = f"AUTO: ΔT ({convert_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) insufficient. Pump OFF."
+                        msg = f"AUTO: ΔT ({format_delta_temp_for_display(dt_c_val, display_unit)}{unit_symbol}) insufficient. Pump OFF."
                         update_status(system_message=msg)
                 else: 
                     errmsg = "AUTO: Sensor error during evaluation. Stopping pump."
@@ -605,8 +625,10 @@ def history_page():
                         ts = row_dict.get('timestamp', 'N/A')
                         in_c_str, out_c_str = row_dict.get('inlet_temp_c', 'N/A'), row_dict.get('outlet_temp_c', 'N/A')
                         try:
-                            in_c, out_c = (float(in_c_str) if in_c_str != 'N/A' else None), (float(out_c_str) if out_c_str != 'N/A' else None)
-                            log_data_preview.append([ts, convert_temp_for_display(in_c, display_unit_hist), convert_temp_for_display(out_c, display_unit_hist)])
+                            in_c = float(in_c_str) if in_c_str not in ['N/A', '', None] else None
+                            out_c = float(out_c_str) if out_c_str not in ['N/A', '', None] else None
+                            # Use format_absolute_temp_for_display for history page
+                            log_data_preview.append([ts, format_absolute_temp_for_display(in_c, display_unit_hist), format_absolute_temp_for_display(out_c, display_unit_hist)])
                         except ValueError: log_data_preview.append([ts, "Err", "Err"])
         else: message = f"Log file '{log_file_name}' not found."
     except Exception as e:
