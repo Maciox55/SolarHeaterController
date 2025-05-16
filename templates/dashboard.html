@@ -16,12 +16,9 @@
     <div class="status-item"><strong>Outlet Temp:</strong> <span>{{ status.outlet_temp_str }}</span></div>
     <div class="status-item"><strong>Delta T:</strong> <span>{{ status.delta_t_str }}</span></div>
     <div class="status-item"><strong>Target Speed:</strong> <span>{{ status.target_pump_speed }} %</span></div>
-    <div class="status-item"><strong>Actual Speed:</strong> <span>{{ status.pump_speed }} %</span></div>
-    <div class="status-item"><strong>Est. Power:</strong> <span>{{ status.thermal_power_watts }} W</span></div>
+    <div class="status-item"><strong>Actual Speed:</strong> <span>{{ status.pump_speed }} %</span></div>    
     <div class="status-item"><strong>Optimal Speed:</strong> <span>{{ status.optimal_pump_speed_found }} %</span></div>
     <div class="status-item"><strong>Max Delta T:</strong> <span>{{ status.max_delta_t_found_str }}</span></div>
-    <div class="status-item"><strong>Pump ON Today:</strong> <span>{{ '%.2f' | format(status.pump_on_time_today_s / 3600.0) }} hrs</span></div>
-    <div class="status-item"><strong>Energy Today:</strong> <span>{{ '%.2f' | format(status.energy_harvested_today_wh) }} Wh</span></div>
     </div></div><div class="chart-container"><canvas id="temperatureChart" height="300"></canvas></div></div>
     <footer>Last Update: {{ status.last_update }} <br/> (Page auto-refreshes every 10 seconds)</footer>
     <script> let tempChart; async function fetchGraphData() {
