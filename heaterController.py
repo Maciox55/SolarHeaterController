@@ -473,6 +473,13 @@ def index():
     current_display_status['max_delta_t_found_str'] = f"{current_display_status['max_delta_t_found_display']} {current_display_status['display_temp_unit_symbol']}" if current_display_status['max_delta_t_found_display'] != "N/A" else "N/A"
     return render_template('dashboard.html', status=current_display_status)
 
+@flask_app.route('/check_update')
+def check_update_route():
+    with data_lock:
+        # Ensure last_update is always a string, even if somehow not set initially
+        last_update_timestamp = app_status.get("last_update", time.strftime("%Y-%m-%d %H:%M:%S"))
+    return jsonify({"last_update": last_update_timestamp})
+
 
 @flask_app.route('/graph_data')
 def get_graph_data():
