@@ -313,16 +313,13 @@ def update_status_and_history(inlet_temp_c=None, outlet_temp_c=None, delta_t_c=N
         app_status["last_update"] = full_timestamp_log
         app_status["display_temp_unit_symbol"] = "°F" if display_unit == "F" else "°C"
 
-        graph_inlet = celsius_to_fahrenheit(inlet_temp_c) if display_unit == "F" and inlet_temp_c is not None else inlet_temp_c
-        graph_outlet = celsius_to_fahrenheit(outlet_temp_c) if display_unit == "F" and outlet_temp_c is not None else outlet_temp_c
-
         if isinstance(inlet_temp_c, float) and isinstance(outlet_temp_c, float):
             temperature_history.append({"time": current_time_str_graph, 
-                                        "inlet": round(graph_inlet, 2) if graph_inlet is not None else None, 
-                                        "outlet": round(graph_outlet, 2) if graph_outlet is not None else None})
+                                        "inlet_c": round(inlet_temp_c, 2) if inlet_temp_c is not None else None,
+                                        "outlet_c": round(outlet_temp_c, 2) if outlet_temp_c is not None else None})
             log_buffer.append({"timestamp": full_timestamp_log, "inlet_temp_c": round(inlet_temp_c, 2), "outlet_temp_c": round(outlet_temp_c, 2)})
         elif not any(k in kwargs for k in ["pump_speed", "system_message", "target_pump_speed"]):
-             temperature_history.append({"time": current_time_str_graph, "inlet": None, "outlet": None})
+             temperature_history.append({"time": current_time_str_graph, "inlet_c": None, "outlet_c": None})
 
 def update_status(**kwargs): 
     with data_lock:
@@ -483,9 +480,27 @@ def get_graph_data():
         display_unit = current_settings.get("DISPLAY_TEMP_UNIT", "C")
         unit_symbol = "°F" if display_unit == "F" else "°C"
         graph_data_points = []
-        for point in list(temperature_history): 
+        for point in list(temperature_history): # Iterate over a copy
+            inlet_c_val = point.get("inlet_c")
+            outlet_c_val = point.get("outlet_c")
+
+            display_inlet = None
+            display_outlet = None
+
+            if inlet_c_val is not None:
+                if display_unit == "F":
+                    display_inlet = round(celsius_to_fahrenheit(inlet_c_val), 1)
+                else: # Celsius
+                    display_inlet = round(inlet_c_val, 2)
+
+            if outlet_c_val is not None:
+                if display_unit == "F":
+                    display_outlet = round(celsius_to_fahrenheit(outlet_c_val), 1)
+                else: # Celsius
+                    display_outlet = round(outlet_c_val, 2)
+
             graph_data_points.append({
-                "time": point.get("time"), "inlet": point.get("inlet"), "outlet": point.get("outlet"), "unit_symbol": unit_symbol
+                "time": point.get("time"), "inlet": display_inlet, "outlet": display_outlet, "unit_symbol": unit_symbol
             })
         return jsonify(graph_data_points)
 
