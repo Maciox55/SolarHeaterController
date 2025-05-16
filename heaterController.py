@@ -3,7 +3,7 @@ import glob
 import time
 import RPi.GPIO as GPIO
 import threading
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file
+from flask import Flask, render_template, jsonify, request, redirect, url_for, send_file # Changed render_template_string
 import collections # For deque
 import csv         # For CSV logging
 import json        # For settings persistence
@@ -474,75 +474,7 @@ def index():
     current_display_status['outlet_temp_str'] = f"{current_display_status['outlet_temp_display']} {current_display_status['display_temp_unit_symbol']}"
     current_display_status['delta_t_str'] = f"{current_display_status['delta_t_display']} {current_display_status['display_temp_unit_symbol']}"
     current_display_status['max_delta_t_found_str'] = f"{current_display_status['max_delta_t_found_display']} {current_display_status['display_temp_unit_symbol']}" if current_display_status['max_delta_t_found_display'] != "N/A" else "N/A"
-    html_template_dashboard = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="10"><title>Solar Heater Dashboard</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; color: #333; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        header { background-color: #0056b3; color: white; padding: 12px 0; text-align: center; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        header h1 { margin: 0; font-size: 1.6em; } nav { margin-top: 8px; }
-        nav a { color: #e0e0e0; margin: 0 10px; text-decoration: none; font-size: 0.95em; padding: 5px 10px; border-radius: 4px; transition: background-color 0.3s, color 0.3s;}
-        nav a:hover, nav a.active { color: #ffffff; background-color: #004080; text-decoration: none; }
-        .content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box;}
-        .container { background-color: #ffffff; padding: 20px 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 850px; margin-bottom: 20px; }
-        h2.page-title { color: #0056b3; text-align: center; margin-bottom: 20px; font-size: 1.7em;}
-        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 10px; }
-        .status-item { background-color: #e9ecef; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .status-item strong { color: #0056b3; font-weight: 600; display: block; margin-bottom: 7px; font-size: 0.9em;}
-        .status-item span { font-size: 1.05em; font-weight: 500; }
-        .message-box { margin-top: 15px; margin-bottom: 15px; padding: 15px; background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; border-radius: 8px; text-align: center; font-weight: 500; font-size: 1em;}
-        .chart-container { background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 850px; margin-top: 10px; }
-        .manual-controls { margin-top:20px; padding:15px; border: 1px solid #ddd; border-radius:8px; background-color:#f9f9f9;}
-        .manual-controls label {margin-right:10px;} .manual-controls input[type=number] {width: 70px; margin-right:10px; padding:5px;}
-        .manual-controls button {padding:5px 10px; background-color:#007bff; color:white; border:none; border-radius:4px; cursor:pointer;}
-        .manual-controls button:hover {background-color:#0056b3;}
-        footer { text-align: center; margin-top: 30px; font-size: 0.85em; color: #777; padding-bottom: 20px; width:100%;}
-        @media (max-width: 700px) { header h1 { font-size: 1.4em; } nav a { margin: 0 8px; font-size: 0.9em;} .container, .chart-container { width: 95%; } h2.page-title {font-size: 1.4em;} .status-grid { grid-template-columns: 1fr 1fr; } }
-        @media (max-width: 480px) { .status-grid { grid-template-columns: 1fr; } } 
-    </style></head><body> <header><h1>Solar Heater Controller</h1><nav> <a href="/" class="active">Dashboard</a><a href="/settings">Settings</a><a href="/history">History</a> </nav></header>
-    <div class="content-wrapper"><div class="container"><h2 class="page-title">Live Status & Control</h2> <div class="message-box">{{ status.system_message }}</div>
-    <div class="manual-controls"> <form method="POST" action="{{ url_for('set_control_mode') }}" style="display:inline-block; margin-bottom:10px;"> <strong>Mode:</strong>
-    <label><input type="radio" name="control_mode" value="auto" {% if status.control_mode == 'auto' %}checked{% endif %}> Auto</label>
-    <label><input type="radio" name="control_mode" value="manual" {% if status.control_mode == 'manual' %}checked{% endif %}> Manual</label>
-    <button type="submit">Set Mode</button> </form> {% if status.control_mode == 'manual' %}
-    <form method="POST" action="{{ url_for('set_manual_pump_speed_route') }}" style="display:inline-block;"> <label for="manual_speed">Manual Speed (%):</label>
-    <input type="number" id="manual_speed" name="manual_speed" value="{{ status.target_pump_speed }}" min="0" max="100" step="5">
-    <button type="submit">Set Speed</button> </form> {% endif %} </div> <div class="status-grid">
-    <div class="status-item"><strong>Inlet Temp:</strong> <span>{{ status.inlet_temp_str }}</span></div>
-    <div class="status-item"><strong>Outlet Temp:</strong> <span>{{ status.outlet_temp_str }}</span></div>
-    <div class="status-item"><strong>Delta T:</strong> <span>{{ status.delta_t_str }}</span></div>
-    <div class="status-item"><strong>Target Speed:</strong> <span>{{ status.target_pump_speed }} %</span></div>
-    <div class="status-item"><strong>Actual Speed:</strong> <span>{{ status.pump_speed }} %</span></div>
-    <div class="status-item"><strong>Est. Power:</strong> <span>{{ status.thermal_power_watts }} W</span></div>
-    <div class="status-item"><strong>Optimal Speed:</strong> <span>{{ status.optimal_pump_speed_found }} %</span></div>
-    <div class="status-item"><strong>Max Delta T:</strong> <span>{{ status.max_delta_t_found_str }}</span></div>
-    <div class="status-item"><strong>Pump ON Today:</strong> <span>{{ '%.2f' | format(status.pump_on_time_today_s / 3600.0) }} hrs</span></div>
-    <div class="status-item"><strong>Energy Today:</strong> <span>{{ '%.2f' | format(status.energy_harvested_today_wh) }} Wh</span></div>
-    </div></div><div class="chart-container"><canvas id="temperatureChart" height="300"></canvas></div></div>
-    <footer>Last Update: {{ status.last_update }} <br/> (Page auto-refreshes every 10 seconds)</footer>
-    <script> let tempChart; async function fetchGraphData() { /* ... Chart.js script ... */ } document.addEventListener('DOMContentLoaded', fetchGraphData); </script>
-    </body></html>"""
-    html_template_dashboard = html_template_dashboard.replace("/* ... Chart.js script ... */", """
-                try {
-                    const response = await fetch('/graph_data');
-                    if (!response.ok) { console.error('Failed to fetch graph data:', response.status); return; }
-                    const data = await response.json(); const labels = data.map(d => d.time);
-                    const inletTemps = data.map(d => d.inlet); const outletTemps = data.map(d => d.outlet);
-                    const displayUnitSymbol = data.length > 0 ? data[0].unit_symbol : '°C'; 
-                    const chartData = { labels: labels, datasets: [
-                            { label: 'Inlet Temp (' + displayUnitSymbol + ')', data: inletTemps, borderColor: 'rgb(54, 162, 235)', backgroundColor: 'rgba(54, 162, 235, 0.1)', tension: 0.1, spanGaps: true },
-                            { label: 'Outlet Temp (' + displayUnitSymbol + ')', data: outletTemps, borderColor: 'rgb(255, 99, 132)', backgroundColor: 'rgba(255, 99, 132, 0.1)', tension: 0.1, spanGaps: true }
-                        ]};
-                    const ctx = document.getElementById('temperatureChart').getContext('2d');
-                    if (tempChart) { 
-                        tempChart.data = chartData; 
-                        tempChart.options.scales.y.title.text = 'Temperature (' + displayUnitSymbol + ')';
-                        tempChart.update('none');
-                    } else { tempChart = new Chart(ctx, { type: 'line', data: chartData, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
-                                scales: { y: { beginAtZero: false, title: { display: true, text: 'Temperature (' + displayUnitSymbol + ')'}}, x: { title: { display: true, text: 'Time'}}},
-                                plugins: { legend: { position: 'top' }, title: { display: true, text: 'Temperature Trends' } }
-                            }}); }
-                } catch (error) { console.error('Error fetching or processing graph data:', error); } """)
-    return render_template_string(html_template_dashboard, status=current_display_status)
+    return render_template('dashboard.html', status=current_display_status)
 
 
 @flask_app.route('/graph_data')
@@ -625,112 +557,7 @@ def settings_page():
         return redirect(url_for('settings_page', message=message))
 
     with data_lock: settings_to_display = current_settings.copy()
-    # Corrected Settings Page HTML Template
-    settings_html_template = """
-    <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Controller Settings</title><style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; color: #333; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        header { background-color: #0056b3; color: white; padding: 12px 0; text-align: center; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        header h1 { margin: 0; font-size: 1.6em; } nav { margin-top: 8px; }
-        nav a { color: #e0e0e0; margin: 0 10px; text-decoration: none; font-size: 0.95em; padding: 5px 10px; border-radius: 4px; transition: background-color 0.3s, color 0.3s;}
-        nav a:hover, nav a.active { color: #ffffff; background-color: #004080; text-decoration: none; }
-        .content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box;}
-        .container { background-color: #ffffff; padding: 25px 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 800px; margin-bottom: 20px; }
-        h2.page-title { color: #0056b3; text-align: center; margin-bottom: 25px; font-size: 1.8em;}
-        .form-grid { display: grid; grid-template-columns: 1fr; gap: 0px; } 
-        @media (min-width: 768px) { .form-grid { grid-template-columns: 1fr 1fr; gap: 20px; } } 
-        .form-section { margin-bottom: 20px; padding: 15px; background-color: #fdfdfd; border-radius: 5px; border: 1px solid #eee;} 
-        .form-section h3 {color: #004080; border-bottom: 1px solid #eee; padding-bottom:8px; margin-top:0; margin-bottom:18px; font-size:1.1em;}
-        .form-group { margin-bottom: 18px; }
-        .form-group label { display: block; margin-bottom: 7px; font-weight: 600; color: #333; font-size:0.9em; }
-        .form-group input[type="text"], .form-group input[type="number"], .form-group select { width: calc(100% - 24px); padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 0.95em; }
-        .form-group small { display: block; font-size: 0.8em; color: #555; margin-top: 5px; }
-        .submit-btn, .download-btn { background-color: #28a745; color: white; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 1.05em; text-decoration:none; text-align:center; }
-        .submit-btn { display: block; width: 100%; margin-top: 25px;} .submit-btn:hover { background-color: #218838; }
-        .download-btn { background-color: #007bff; display:inline-block; width:auto; padding: 10px 15px; margin-top:5px;} .download-btn:hover { background-color: #0056b3;}
-        .message-box { margin-bottom: 20px; padding: 15px; border-radius: 5px; text-align: center; font-weight: 500;}
-        .message-box.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb;}
-        .message-box.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;}
-        .message-box.warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba;}
-        footer { text-align: center; margin-top: 30px; font-size: 0.85em; color: #777; padding-bottom: 20px; width:100%;}
-    </style></head>
-    <body><header><h1>Solar Heater Controller</h1><nav><a href="/">Dashboard</a><a href="/settings" class="active">Settings</a><a href="/history">History</a></nav></header>
-    <div class="content-wrapper"><div class="container"><h2 class="page-title">Application Settings</h2>
-    {% if message %}
-        <div class="message-box {{ 'success' if 'success' in message.lower() else ('error' if 'error' in message.lower() else ('warning' if ('warning' in message.lower() or 'restart' in message.lower()) else '')) }}">{{ message }}</div>
-    {% endif %}
-    <form method="POST"><div class="form-grid">
-    <div class="form-section"><h3>Sensor & Hardware</h3>
-    {% for key in ['INLET_SENSOR_ID', 'OUTLET_SENSOR_ID', 'PUMP_PWM_PIN', 'PWM_FREQUENCY'] %}
-    <div class="form-group">
-        <label for="{{ key }}">{{ key.replace('_', ' ').title() }}:</label>
-        <input type="{{ 'number' if DEFAULT_SETTINGS[key] is number else 'text' }}" id="{{ key }}" name="{{ key }}" value="{{ settings[key] }}">
-        <small>Default: {{ DEFAULT_SETTINGS[key] }}</small>
-    </div>
-    {% endfor %}
-    </div> 
-    <div class="form-section"><h3>Pump Control</h3>
-    {% for key in ['MIN_PUMP_SPEED', 'MAX_PUMP_SPEED', 'PUMP_SPEED_STEP', 'MAX_PUMP_FLOW_RATE_LPM'] %}
-    <div class="form-group">
-        <label for="{{ key }}">{{ key.replace('_', ' ').title() }}:</label>
-        <input type="number" id="{{ key }}" name="{{ key }}" value="{{ settings[key] }}" 
-               {% if key in ['MIN_PUMP_SPEED', 'MAX_PUMP_SPEED'] %}min="0" max="100"{% elif key=='PUMP_SPEED_STEP'%}min="1"{% else %}step="0.1" min="0"{% endif %}>
-        <small>Default: {{ DEFAULT_SETTINGS[key] }}</small>
-    </div>
-    {% endfor %}
-    </div>
-    <div class="form-section"><h3>Operational Logic</h3>
-    {% for key in ['STABILIZATION_TIME_S', 'LOOP_INTERVAL_S', 'DELTA_T_ON', 'DELTA_T_OFF', 'MIN_INLET_TEMP_TO_RUN', 'MAX_OUTLET_TEMP_CUTOFF'] %}
-    <div class="form-group">
-        <label for="{{ key }}">{{ key.replace('_', ' ').title() }}:</label>
-        <input type="number" id="{{ key }}" name="{{ key }}" value="{{ settings[key] }}" 
-               {% if 'TEMP' in key or 'DELTA' in key %}step="0.1"{% else %}min="1"{% endif %}>
-        <small>Default: {{ DEFAULT_SETTINGS[key] }}</small>
-    </div>
-    {% endfor %}
-    </div>
-    <div class="form-section"><h3>Logging & UI</h3>
-    {% for key in ['LOG_SAVE_INTERVAL_S', 'TEMPERATURE_LOG_FILE', 'MAX_HISTORY_POINTS', 'MAX_HISTORY_TABLE_ROWS', 'DISPLAY_TEMP_UNIT'] %}
-    <div class="form-group">
-        <label for="{{ key }}">{{ key.replace('_', ' ').title() }}:</label>
-        {% if key == 'DISPLAY_TEMP_UNIT' %}
-            <select id="{{ key }}" name="{{ key }}">
-                <option value="C" {% if settings[key] == 'C' %}selected{% endif %}>Celsius (°C)</option>
-                <option value="F" {% if settings[key] == 'F' %}selected{% endif %}>Fahrenheit (°F)</option>
-            </select>
-        {% else %}
-            <input type="{{ 'number' if DEFAULT_SETTINGS[key] is number else 'text' }}" id="{{ key }}" name="{{ key }}" value="{{ settings[key] }}" 
-                   {% if DEFAULT_SETTINGS[key] is number %}min="1"{% endif %}>
-        {% endif %}
-        <small>Default: {{ DEFAULT_SETTINGS[key] }}</small>
-    </div>
-    {% endfor %}
-    </div>
-    <div class="form-section"><h3>Advanced</h3>
-    <div class="form-group">
-        <label for="ENABLE_HARDWARE_WATCHDOG">Enable Hardware Watchdog:</label>
-        <select id="ENABLE_HARDWARE_WATCHDOG" name="ENABLE_HARDWARE_WATCHDOG">
-        <option value="true" {% if settings.ENABLE_HARDWARE_WATCHDOG %}selected{% endif %}>Yes</option>
-        <option value="false" {% if not settings.ENABLE_HARDWARE_WATCHDOG %}selected{% endif %}>No</option></select>
-        <small>Default: {{ DEFAULT_SETTINGS.ENABLE_HARDWARE_WATCHDOG }}. Requires OS config: dtparam=watchdog=on in /boot/config.txt</small>
-    </div>
-    <div class="form-group">
-        <label for="WATCHDOG_KICK_INTERVAL_S">Watchdog Kick Interval (s):</label>
-        <input type="number" id="WATCHDOG_KICK_INTERVAL_S" name="WATCHDOG_KICK_INTERVAL_S" value="{{ settings.WATCHDOG_KICK_INTERVAL_S }}" min="5">
-        <small>Default: {{ DEFAULT_SETTINGS.WATCHDOG_KICK_INTERVAL_S }}</small>
-    </div>
-    <div class="form-group">
-        <label for="WATCHDOG_DEVICE">Watchdog Device Path:</label>
-        <input type="text" id="WATCHDOG_DEVICE" name="WATCHDOG_DEVICE" value="{{ settings.WATCHDOG_DEVICE }}">
-        <small>Default: {{ DEFAULT_SETTINGS.WATCHDOG_DEVICE }}</small>
-    </div>
-    </div></div> 
-    <div class="form-group" style="margin-top:20px; text-align:center;"> <label style="margin-bottom:10px;">Download Log File:</label>
-        <a href="/download_log" class="download-btn">Download {{ settings.TEMPERATURE_LOG_FILE }}</a>
-    </div>
-    <button type="submit" class="submit-btn">Save Settings</button></form>
-    </div></div><footer>Controller Version 1.5</footer></body></html>"""
-    return render_template_string(settings_html_template, settings=settings_to_display, message=message, DEFAULT_SETTINGS=DEFAULT_SETTINGS)
+    return render_template('settings.html', settings=settings_to_display, message=message, DEFAULT_SETTINGS=DEFAULT_SETTINGS)
 
 @flask_app.route('/history')
 def history_page():
@@ -760,48 +587,9 @@ def history_page():
                             log_data_preview.append([ts, convert_temp_for_display(in_c, display_unit_hist), convert_temp_for_display(out_c, display_unit_hist)])
                         except ValueError: log_data_preview.append([ts, "Err", "Err"])
         else: message = f"Log file '{log_file_name}' not found."
-    except Exception as e: message = f"Error reading log file: {e}"; print(f"Error on /history: {e}")
-    history_html_template = """"""
-    history_html_template = """
-    <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Log History</title><style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; color: #333; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        header { background-color: #0056b3; color: white; padding: 12px 0; text-align: center; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        header h1 { margin: 0; font-size: 1.6em; } nav { margin-top: 8px; }
-        nav a { color: #e0e0e0; margin: 0 10px; text-decoration: none; font-size: 0.95em; padding: 5px 10px; border-radius: 4px;}
-        nav a:hover, nav a.active { color: #ffffff; background-color: #004080;}
-        .content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box;}
-        .container { background-color: #ffffff; padding: 25px 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 95%; max-width: 1000px; margin-bottom: 20px; }
-        h2.page-title { color: #0056b3; text-align: center; margin-bottom: 10px; font-size: 1.8em;}
-        .info-text { text-align:center; font-size:0.9em; color:#555; margin-bottom:20px;}
-        .download-section { margin-bottom: 20px; text-align: center; }
-        .download-btn { background-color: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; text-decoration:none;}
-        .download-btn:hover { background-color: #0056b3;}
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9em; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-        th { background-color: #e9ecef; color: #0056b3; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-        .message-box { margin-bottom: 20px; padding: 15px; border-radius: 5px; text-align: center; font-weight: 500;}
-        .message-box.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;}
-        footer { text-align: center; margin-top: 30px; font-size: 0.85em; color: #777; padding-bottom: 20px; width:100%;}
-    </style></head>
-    <body><header><h1>Solar Heater Controller</h1><nav><a href="/">Dashboard</a><a href="/settings">Settings</a><a href="/history" class="active">History</a></nav></header>
-    <div class="content-wrapper"><div class="container">
-    <h2 class="page-title">Temperature Log History (Last {{ max_rows }} Entries)</h2>
-    <p class="info-text">Displaying temperatures in {{ unit_symbol_hist }}. Logged data in CSV is always in Celsius.</p>
-    {% if message %}<div class="message-box error">{{ message }}</div>{% endif %}
-    <div class="download-section"><a href="/download_log" class="download-btn">Download Full Log ({{ log_file_name }})</a></div>
-    {% if log_data_preview and log_data_preview[0] %} 
-        <table><thead><tr>
-        {% for header_cell in log_data_preview[0] %}<th>{{ header_cell }}</th>{% endfor %}
-        </tr></thead><tbody>
-        {% for row in log_data_preview[1:] %}<tr>
-        {% for cell in row %}<td>{{ cell }}</td>{% endfor %}
-        </tr>{% endfor %}
-        </tbody></table>
-    {% else %} <p>No log data to display, or log file is empty/not found.</p> {% endif %}
-    </div></div><footer>Controller Version 1.5</footer></body></html>"""
-    return render_template_string(history_html_template, log_data_preview=log_data_preview, message=message, log_file_name=log_file_name, max_rows=current_settings.get("MAX_HISTORY_TABLE_ROWS", DEFAULT_SETTINGS["MAX_HISTORY_TABLE_ROWS"]), unit_symbol_hist=unit_symbol_hist)
+    except Exception as e:
+        message = f"Error reading log file: {e}"; print(f"Error on /history: {e}")
+    return render_template('history.html', log_data_preview=log_data_preview, message=message, log_file_name=log_file_name, max_rows=current_settings.get("MAX_HISTORY_TABLE_ROWS", DEFAULT_SETTINGS["MAX_HISTORY_TABLE_ROWS"]), unit_symbol_hist=unit_symbol_hist)
 
 @flask_app.route('/download_log')
 def download_log():
