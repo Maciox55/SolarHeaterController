@@ -1,28 +1,9 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="10"><title>Solar Heater Dashboard</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; color: #333; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        header { background-color: #0056b3; color: white; padding: 12px 0; text-align: center; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        header h1 { margin: 0; font-size: 1.6em; } nav { margin-top: 8px; }
-        nav a { color: #e0e0e0; margin: 0 10px; text-decoration: none; font-size: 0.95em; padding: 5px 10px; border-radius: 4px; transition: background-color 0.3s, color 0.3s;}
-        nav a:hover, nav a.active { color: #ffffff; background-color: #004080; text-decoration: none; }
-        .content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box;}
-        .container { background-color: #ffffff; padding: 20px 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 850px; margin-bottom: 20px; }
-        h2.page-title { color: #0056b3; text-align: center; margin-bottom: 20px; font-size: 1.7em;}
-        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 10px; }
-        .status-item { background-color: #e9ecef; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .status-item strong { color: #0056b3; font-weight: 600; display: block; margin-bottom: 7px; font-size: 0.9em;}
-        .status-item span { font-size: 1.05em; font-weight: 500; }
-        .message-box { margin-top: 15px; margin-bottom: 15px; padding: 15px; background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; border-radius: 8px; text-align: center; font-weight: 500; font-size: 1em;}
-        .chart-container { background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 850px; margin-top: 10px; }
-        .manual-controls { margin-top:20px; padding:15px; border: 1px solid #ddd; border-radius:8px; background-color:#f9f9f9;}
-        .manual-controls label {margin-right:10px;} .manual-controls input[type=number] {width: 70px; margin-right:10px; padding:5px;}
-        .manual-controls button {padding:5px 10px; background-color:#007bff; color:white; border:none; border-radius:4px; cursor:pointer;}
-        .manual-controls button:hover {background-color:#0056b3;}
-        footer { text-align: center; margin-top: 30px; font-size: 0.85em; color: #777; padding-bottom: 20px; width:100%;}
-        @media (max-width: 700px) { header h1 { font-size: 1.4em; } nav a { margin: 0 8px; font-size: 0.9em;} .container, .chart-container { width: 95%; } h2.page-title {font-size: 1.4em;} .status-grid { grid-template-columns: 1fr 1fr; } }
-        @media (max-width: 480px) { .status-grid { grid-template-columns: 1fr; } }
-    </style></head><body> <header><h1>Solar Heater Controller</h1><nav> <a href="/" class="active">Dashboard</a><a href="/settings">Settings</a><a href="/history">History</a> </nav></header>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <header><h1>Solar Heater Controller</h1><nav> <a href="/" class="active">Dashboard</a><a href="/settings">Settings</a><a href="/history">History</a> </nav></header>
     <div class="content-wrapper"><div class="container"><h2 class="page-title">Live Status & Control</h2> <div class="message-box">{{ status.system_message }}</div>
     <div class="manual-controls"> <form method="POST" action="{{ url_for('set_control_mode') }}" style="display:inline-block; margin-bottom:10px;"> <strong>Mode:</strong>
     <label><input type="radio" name="control_mode" value="auto" {% if status.control_mode == 'auto' %}checked{% endif %}> Auto</label>
