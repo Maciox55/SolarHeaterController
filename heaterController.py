@@ -27,13 +27,13 @@ DEFAULT_SETTINGS = {
     "DELTA_T_OFF": 1.5,
     "MIN_INLET_TEMP_TO_RUN": 10.0,
     "MAX_OUTLET_TEMP_CUTOFF": 75.0,
-    "MAX_PUMP_FLOW_RATE_LPM": 20.0,
     "LOG_SAVE_INTERVAL_S": 300,
     "TEMPERATURE_LOG_FILE": "temperature_log.csv",
     "MAX_HISTORY_POINTS": 150,
     "MAX_HISTORY_TABLE_ROWS": 200,
     "CONTROL_MODE": "auto",
     "MANUAL_PUMP_SPEED_SETTING": 30,
+    "ENABLE_PUMP_CONTROL": False, # If False, pump is ON/OFF, not speed controlled
     "ENABLE_HARDWARE_WATCHDOG": False,
     "WATCHDOG_KICK_INTERVAL_S": 30,
     "WATCHDOG_DEVICE": "/dev/watchdog",
@@ -45,8 +45,6 @@ current_settings = DEFAULT_SETTINGS.copy()
 
 # --- Constants ---
 BASE_DIR = '/sys/bus/w1/devices/'
-SPECIFIC_HEAT_CAPACITY_WATER = 4186  # J/kg°C
-WATER_DENSITY_KG_L = 1.0  # kg/L (approx)
 
 # --- Application State & Data ---
 app_status = {
@@ -55,13 +53,10 @@ app_status = {
     "delta_t_display": "N/A",    
     "pump_speed": 0,
     "target_pump_speed": 0,
-    "thermal_power_watts": "N/A",
     "system_message": "Initializing...",
     "optimal_pump_speed_found": "N/A",
     "max_delta_t_found_display": "N/A", 
     "control_mode": DEFAULT_SETTINGS["CONTROL_MODE"],
-    "pump_on_time_today_s": 0.0,
-    "energy_harvested_today_wh": 0.0,
     "last_stats_reset_date": datetime.date.today().isoformat(),
     "display_temp_unit_symbol": "°C", 
     "last_update": time.strftime("%Y-%m-%d %H:%M:%S")
@@ -237,47 +232,42 @@ def read_temp_c(sensor_file_path): # Always returns Celsius
 # --- PWM Pump Functions ---
 def setup_pwm():
     global pwm_pump
-    GPIO.setwarnings(False); GPIO.setmode(GPIO.BCM)
-    GPIO.setup(current_settings["PUMP_PWM_PIN"], GPIO.OUT)
-    if pwm_pump: pwm_pump.stop()
-    pwm_pump = GPIO.PWM(current_settings["PUMP_PWM_PIN"], current_settings["PWM_FREQUENCY"])
-    pwm_pump.start(0)
-    update_status(pump_speed=0, target_pump_speed=0, system_message="PWM Initialized. Pump is OFF.")
+    if not current_settings.get("ENABLE_PUMP_CONTROL", False):
+        update_status(pump_speed=0, target_pump_speed=0, system_message="Pump control disabled. PWM not initialized.")
+        pwm_pump = None # Ensure it's None
+        return
+
+    try:
+        GPIO.setwarnings(False); GPIO.setmode(GPIO.BCM)
+        GPIO.setup(current_settings["PUMP_PWM_PIN"], GPIO.OUT)
+        if pwm_pump: pwm_pump.stop() # Stop existing PWM if any
+        pwm_pump = GPIO.PWM(current_settings["PUMP_PWM_PIN"], current_settings["PWM_FREQUENCY"])
+        pwm_pump.start(0)
+        update_status(pump_speed=0, target_pump_speed=0, system_message="PWM Initialized for pump control. Pump is OFF.")
+    except Exception as e:
+        print(f"Error setting up PWM: {e}")
+        update_status(system_message=f"Error setting up PWM: {e}. Pump control might not work.")
+        pwm_pump = None
 
 def set_pump_speed(speed_percent_target):
     global pwm_pump
-    if pwm_pump is None:
-        update_status(system_message="Error: PWM not initialized."); return
     target_speed = max(0, min(100, speed_percent_target))
     actual_duty_cycle = 0
-    if target_speed > 0:
-        actual_duty_cycle = max(current_settings["MIN_PUMP_SPEED"], min(current_settings["MAX_PUMP_SPEED"], target_speed))
-    if pwm_pump: pwm_pump.ChangeDutyCycle(float(actual_duty_cycle))
-    else: print("Error: pwm_pump object is None in set_pump_speed.")
+
+    if current_settings.get("ENABLE_PUMP_CONTROL", False):
+        if pwm_pump is None:
+            update_status(system_message="Error: PWM not initialized for pump control."); return
+        if target_speed > 0:
+            actual_duty_cycle = max(current_settings["MIN_PUMP_SPEED"], min(current_settings["MAX_PUMP_SPEED"], target_speed))
+        pwm_pump.ChangeDutyCycle(float(actual_duty_cycle))
+    else: # Pump control disabled, so it's just ON or OFF
+        actual_duty_cycle = 100 if target_speed > 0 else 0
+
     update_status(pump_speed=actual_duty_cycle, target_pump_speed=target_speed)
 
 def stop_pump():
     set_pump_speed(0)
-    update_status(system_message="Pump stopped.", thermal_power_watts="N/A")
-
-# --- Thermal Power & Statistics ---
-def calculate_estimated_thermal_power(delta_t_celsius, current_actual_pump_speed_percent):
-    if delta_t_celsius is None or current_actual_pump_speed_percent is None or current_actual_pump_speed_percent == 0: return None
-    estimated_flow_lps = (float(current_actual_pump_speed_percent) / 100.0) * (current_settings["MAX_PUMP_FLOW_RATE_LPM"] / 60.0)
-    return (estimated_flow_lps * WATER_DENSITY_KG_L) * SPECIFIC_HEAT_CAPACITY_WATER * delta_t_celsius
-
-def update_daily_stats(pump_is_on_flag, seconds_elapsed, current_power_watts):
-    with data_lock:
-        today_iso = datetime.date.today().isoformat()
-        if app_status.get("last_stats_reset_date") != today_iso:
-            app_status["pump_on_time_today_s"] = 0.0
-            app_status["energy_harvested_today_wh"] = 0.0
-            app_status["last_stats_reset_date"] = today_iso
-            print(f"Daily statistics reset for {today_iso}")
-        if pump_is_on_flag:
-            app_status["pump_on_time_today_s"] += seconds_elapsed
-            if current_power_watts is not None and isinstance(current_power_watts, (float, int)) and current_power_watts > 0:
-                app_status["energy_harvested_today_wh"] += (current_power_watts * seconds_elapsed) / 3600.0
+    update_status(system_message="Pump stopped.")
 
 # --- CSV Logging ---
 def write_log_buffer_to_csv():
@@ -316,10 +306,6 @@ def update_status_and_history(inlet_temp_c=None, outlet_temp_c=None, delta_t_c=N
         # Use the new function for formatting delta T
         status_updates["delta_t_display"] = format_delta_temp_for_display(calculated_delta_t_c, display_unit)
 
-        actual_pump_speed = float(app_status.get("pump_speed", 0))
-        power_w = calculate_estimated_thermal_power(calculated_delta_t_c, actual_pump_speed)
-        status_updates["thermal_power_watts"] = f"{power_w:.1f}" if power_w is not None else "N/A"
-            
         for key, value in status_updates.items():
             if key in app_status: app_status[key] = value
         app_status["last_update"] = full_timestamp_log
@@ -337,7 +323,7 @@ def update_status(**kwargs):
     with data_lock:
         for key, value in kwargs.items():
             if key in app_status:
-                if isinstance(value, float) and key not in ["inlet_temp_display", "outlet_temp_display", "delta_t_display", "thermal_power_watts", "pump_on_time_today_s", "energy_harvested_today_wh", "max_delta_t_found_display"]:
+                if isinstance(value, float) and key not in ["inlet_temp_display", "outlet_temp_display", "delta_t_display", "max_delta_t_found_display"]: # Removed power/energy keys
                     app_status[key] = f"{value:.2f}" 
                 else: app_status[key] = value
         app_status["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -405,7 +391,6 @@ def control_logic_thread_func():
     last_log_save_time, last_watchdog_kick_time = time.time(), time.time()
     with data_lock:
         app_status["last_stats_reset_date"] = datetime.date.today().isoformat()
-        app_status["pump_on_time_today_s"], app_status["energy_harvested_today_wh"] = 0.0, 0.0
     while control_thread_running:
         current_time = time.time()
         loop_interval = current_settings["LOOP_INTERVAL_S"]
@@ -413,15 +398,6 @@ def control_logic_thread_func():
         reopt_interval = current_settings.get("REOPTIMIZATION_INTERVAL_S", DEFAULT_SETTINGS["REOPTIMIZATION_INTERVAL_S"])
         watchdog_kick_interval = current_settings.get("WATCHDOG_KICK_INTERVAL_S", 30)
         
-        pump_speed_val, power_val_watts = 0.0, 0.0
-        with data_lock:
-            try:
-                pump_speed_val = float(app_status.get("pump_speed", 0.0))
-                power_str = app_status.get("thermal_power_watts", "N/A")
-                if power_str != "N/A": power_val_watts = float(power_str)
-            except ValueError: pass
-        update_daily_stats(pump_is_on_flag=(pump_speed_val > 0), seconds_elapsed=1, current_power_watts=power_val_watts)
-
         with data_lock: control_mode = current_settings.get("CONTROL_MODE", "auto")
         
         if control_mode == "manual":
@@ -431,7 +407,10 @@ def control_logic_thread_func():
                 in_temp_c, out_temp_c, dt_c = read_temp_c(inlet_sensor_file), read_temp_c(outlet_sensor_file), None
                 if in_temp_c and out_temp_c: dt_c = out_temp_c - in_temp_c
                 update_status_and_history(inlet_temp_c=in_temp_c, outlet_temp_c=out_temp_c, delta_t_c=dt_c,
-                                          system_message=f"Manual: Target {app_status['target_pump_speed']}% (Actual: {app_status['pump_speed']}%).")
+                                          system_message=f"Manual: Target {app_status['target_pump_speed']}% "
+                                                       f"(Actual: {app_status['pump_speed']}%). " +
+                                                       ("Pump control disabled." if not current_settings.get("ENABLE_PUMP_CONTROL") else "")
+                                          )
                 last_control_cycle_time = current_time
         elif control_mode == "auto":
             if (current_time - last_control_cycle_time) >= loop_interval:
@@ -479,7 +458,8 @@ def control_logic_thread_func():
             kick_watchdog(); last_watchdog_kick_time = current_time
         time.sleep(1)
     stop_pump(); update_status(system_message="Control thread stopped."); write_log_buffer_to_csv()
-    if current_settings.get("ENABLE_HARDWARE_WATCHDOG", False): close_watchdog()
+    if watchdog_fd: close_watchdog() # Check watchdog_fd directly
+    
 
 # --- Flask Web Application ---
 flask_app = Flask(__name__)
@@ -717,7 +697,9 @@ if __name__ == '__main__':
         if control_thread and control_thread.is_alive():
             control_thread.join(timeout=15)
             if control_thread.is_alive(): print("Control thread timed out.")
-        write_log_buffer_to_csv()
-        if current_settings.get("ENABLE_HARDWARE_WATCHDOG", False): close_watchdog()
-        if pwm_pump: pwm_pump.stop()
-        GPIO.cleanup(); print("Program terminated.")
+        write_log_buffer_to_csv() # Ensure logs are saved
+        if watchdog_fd: close_watchdog()
+        if pwm_pump: # Only if PWM was initialized
+            pwm_pump.stop()
+            GPIO.cleanup()
+        print("Program terminated.")
